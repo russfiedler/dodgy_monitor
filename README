@@ -1,0 +1,47 @@
+A somewhat(!) clunky way of detecting that processors have hung.
+
+We spawn dodgy_monitor from a single process and tell it how long we expect to spend on the next piece of work.
+
+If it doesn't hear from the calling program within a certain time it implements a  strategy to "just do something". At the moment this means it issues MPI_ABORT and hopes for the best.
+
+Implementation:
+
+Instrument one rank to make calls to the routines in the dodgy_monitor_modules module. For access-om2 this would be done in MATM since it only runs on 1 processor. Multiple processors can be used but there is no point and I haven't tested it. 
+
+The routines  to be called are
+
+
+use  dodgy_monitor_modules
+...
+call dodgy_init                 ! Spawn child process 
+...
+   call dodgy_seg_start(secs)      ! Allow 'secs' seconds at most for the next segment.
+<insert code which may hang here>
+   call dodgy_seg_finish           ! Let the monitor know that we've finished the segment
+...
+call dodgy_end                  ! Finish up and release intercommunicators. Issues a dummy segment start with secs=0.
+
+
+Note that the intercommunicator is kept private to the module
+
+The monitoring program is just  simple loop that repeats until it is told that "0" seconds are required for the next segment at
+which time it will exit. If the number of seconds taken for a segment exceeds the allowable time MPI_ABORT is issued. We just
+use a simple nonblocking MPI_IBARRIER to check whether the main program has advanced.
+
+-------
+call dodgy_monitor_init    !initialise MPI and get parent intercommunicator.
+
+do
+   call dodgy_monitor_start_segment(secs)   ! get number of seconds allowed for this segment (blocking recv)
+   if ( secs == 0 ) exit
+   call dodgy_monitor_end_segment(secs)     ! Spin wait until IBARRIER request from parent is completed. Abort if too long.
+enddo
+
+call dodgy_monitor_end                      ! Release intercommunicator and exit MPI.
+--------
+
+
+You probably want to make sure that MPI_UNIVERSE_SIZE is greater than the the number of processes in the original program(s).
+i.e. no oversubscribing. This should usually be the case for access-om2.
+
+
